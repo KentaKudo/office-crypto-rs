@@ -63,7 +63,7 @@ pub(crate) struct AgileEncryptionInfo {
     password_key_bits: u32,
 }
 
-pub fn decrypt_from_bytes(raw: Vec<u8>, password: &str) -> Result<Vec<u8>, DecryptError> {
+pub fn decrypt_from_bytes(raw: &[u8], password: &str) -> Result<Vec<u8>, DecryptError> {
     let mut olefile = cfb::CompoundFile::open(Cursor::new(raw))
         .map_err(|_| InvalidStructure)
         .map_err(|_| Unknown)?;
