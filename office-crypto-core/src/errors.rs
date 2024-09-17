@@ -6,8 +6,8 @@ pub enum DecryptError {
     IoError(std::io::Error),
     #[error("Invalid Olefile Header")]
     InvalidHeader,
-    #[error("Invalid File Structure")]
-    InvalidStructure,
+    #[error("Invalid File Structure: `{0}`")]
+    InvalidStructure(String),
     #[error("Unimplemented: `{0}`")]
     Unimplemented(String),
     #[error("Unknown Error")]
