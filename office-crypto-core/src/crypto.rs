@@ -41,7 +41,7 @@ pub fn decrypt<F: Read + Seek>(
 
             aei.decrypt(&secret_key, encrypted_package_stream)
         }
-        [2 | 3 | 4, 0, 2, 0] => {
+        [2..=4, 0, 2, 0] => {
             let sei = StandardEncryptionInfo::new(encryption_info_stream)?;
             let secret_key = sei.key_from_password(password)?;
 
