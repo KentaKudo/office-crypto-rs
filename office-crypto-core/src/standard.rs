@@ -36,71 +36,74 @@ impl StandardEncryptionInfo {
         // );
 
         let mut bytes: [u8; 4] = [0; 4];
-        encryption_info
-            .seek(SeekFrom::Start(8))
-            .map_err(|_| InvalidStructure)?;
+        encryption_info.seek(SeekFrom::Start(8)).map_err(|e| {
+            InvalidStructure(format!(
+                "StandardEncryption: encryption_info.seek(versionInfo + headerFlag): {e}"
+            ))
+        })?;
 
-        encryption_info
-            .read_exact(&mut bytes)
-            .map_err(|_| InvalidStructure)?;
+        encryption_info.read_exact(&mut bytes).map_err(|e| {
+            InvalidStructure(format!(
+                "StandardEncryption: encryption_info: read headerSize: {e}"
+            ))
+        })?;
 
         // TODO: should validate size
         let header_size = u32::from_le_bytes(bytes);
 
         let mut header_bytes = Vec::new();
 
-        encryption_info
-            .seek(SeekFrom::Start(12))
-            .map_err(|_| InvalidStructure)?;
+        encryption_info.seek(SeekFrom::Start(12)).map_err(|e| {
+            InvalidStructure(format!("StandardEncryption: encryption_info.seek(versionInfo + headerFlag + headerSize): {e}"))
+        })?;
         encryption_info
             .by_ref()
             .take(header_size as u64)
             .read_to_end(&mut header_bytes)
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: encryption_info: read header: {e}"
+                ))
+            })?;
 
         let mut sei = Self::default();
 
         // TODO switch to packed struct maybe
-        sei.flags = u32::from_le_bytes(header_bytes[..4].try_into().map_err(|_| InvalidStructure)?);
-        sei.size_extra = u32::from_le_bytes(
-            header_bytes[4..8]
+        sei.flags = u32::from_le_bytes(
+            header_bytes[..4]
                 .try_into()
-                .map_err(|_| InvalidStructure)?,
+                .map_err(|e| InvalidStructure(format!("StandardEncryption: header.flags: {e}")))?,
         );
-        sei.alg_id = u32::from_le_bytes(
-            header_bytes[8..12]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
-        sei.alg_id_hash = u32::from_le_bytes(
-            header_bytes[12..16]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
-        sei.key_size = u32::from_le_bytes(
-            header_bytes[16..20]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
-        sei.provider_type = u32::from_le_bytes(
-            header_bytes[20..24]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
-        sei.reserved1 = u32::from_le_bytes(
-            header_bytes[24..28]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
-        sei.reserved2 = u32::from_le_bytes(
-            header_bytes[28..32]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
+        sei.size_extra = u32::from_le_bytes(header_bytes[4..8].try_into().map_err(|e| {
+            InvalidStructure(format!("StandardEncryption: header.size_extra: {e}"))
+        })?);
+        sei.alg_id =
+            u32::from_le_bytes(header_bytes[8..12].try_into().map_err(|e| {
+                InvalidStructure(format!("StandardEncryption: header.alg_id: {e}"))
+            })?);
+        sei.alg_id_hash = u32::from_le_bytes(header_bytes[12..16].try_into().map_err(|e| {
+            InvalidStructure(format!("StandardEncryption: header.alg_id_hash: {e}"))
+        })?);
+        sei.key_size =
+            u32::from_le_bytes(header_bytes[16..20].try_into().map_err(|e| {
+                InvalidStructure(format!("StandardEncryption: header.key_size: {e}"))
+            })?);
+        sei.provider_type = u32::from_le_bytes(header_bytes[20..24].try_into().map_err(|e| {
+            InvalidStructure(format!("StandardEncryption: header.provider_type: {e}"))
+        })?);
+        sei.reserved1 =
+            u32::from_le_bytes(header_bytes[24..28].try_into().map_err(|e| {
+                InvalidStructure(format!("StandardEncryption: header.reserved1: {e}"))
+            })?);
+        sei.reserved2 =
+            u32::from_le_bytes(header_bytes[28..32].try_into().map_err(|e| {
+                InvalidStructure(format!("StandardEncryption: header.reserved2: {e}"))
+            })?);
 
         let csp_utf16 = header_bytes[32..].to_owned();
         let csp_utf16: &[u16] = unsafe { csp_utf16.align_to::<u16>().1 };
-        sei.csp_name = String::from_utf16(csp_utf16).map_err(|_| InvalidStructure)?;
+        sei.csp_name = String::from_utf16(csp_utf16)
+            .map_err(|e| InvalidStructure(format!("StandardEncryption: header.csp_name: {e}")))?;
 
         // check if AES, otherwise RC4
         validate!(
@@ -112,23 +115,30 @@ impl StandardEncryptionInfo {
 
         encryption_info
             .seek(SeekFrom::Start(12 + header_size as u64))
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: encryption_info.seek(header): {e}"
+                ))
+            })?;
         encryption_info
             .read_to_end(&mut verifier_bytes)
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: encryption_info: read verifier: {e}"
+                ))
+            })?;
 
-        sei.salt_size = u32::from_le_bytes(
-            verifier_bytes[..4]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
+        sei.salt_size = u32::from_le_bytes(verifier_bytes[..4].try_into().map_err(|e| {
+            InvalidStructure(format!("StandardEncryption: verifier.salt_size: {e}"))
+        })?);
         sei.salt = verifier_bytes[4..20].to_owned();
         sei.encrypted_verifier = verifier_bytes[20..36].to_owned();
-        sei.verifier_hash_size = u32::from_le_bytes(
-            verifier_bytes[36..40]
-                .try_into()
-                .map_err(|_| InvalidStructure)?,
-        );
+        sei.verifier_hash_size =
+            u32::from_le_bytes(verifier_bytes[36..40].try_into().map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: verifier.verifier_hash_size: {e}"
+                ))
+            })?);
         sei.encrypted_verifier_hash = verifier_bytes[40..72].to_owned();
 
         Ok(sei)
@@ -166,9 +176,11 @@ impl StandardEncryptionInfo {
     ) -> Result<Vec<u8>, DecryptError> {
         let mut bytes: [u8; 4] = [0; 4];
 
-        encrypted_stream
-            .read_exact(&mut bytes)
-            .map_err(|_| InvalidStructure)?;
+        encrypted_stream.read_exact(&mut bytes).map_err(|e| {
+            InvalidStructure(format!(
+                "StandardEncryption: encrypted_stream.read(total_size): {e}"
+            ))
+        })?;
 
         let total_size = u32::from_le_bytes(bytes) as usize;
 
@@ -176,22 +188,33 @@ impl StandardEncryptionInfo {
 
         encrypted_stream
             .seek(SeekFrom::Start(block_start as u64))
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: encrypted_stream.seek(block_start): {e}"
+                ))
+            })?;
         let mut encrypted_buf: Vec<u8> = vec![];
         encrypted_stream
             .read_to_end(&mut encrypted_buf)
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "StandardEncryption: encrypted_stream: read block: {e}"
+                ))
+            })?;
 
         // has to be big enough to decrypt into
         let mut decrypted: Vec<u8> = vec![0; encrypted_buf.len()];
 
         // 16 bit blocks
-        validate!((encrypted_buf.len()) % 16 == 0, InvalidStructure)?;
+        validate!(
+            (encrypted_buf.len()) % 16 == 0,
+            InvalidStructure("StandardEncryption: block size".to_string())
+        )?;
 
         let ecb_cipher = ecb::Decryptor::<aes::Aes128>::new(key.into());
         ecb_cipher
             .decrypt_padded_b2b_mut::<NoPadding>(&encrypted_buf, &mut decrypted)
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| InvalidStructure(format!("StandardEncryption: decrypt: {e}")))?;
 
         Ok(decrypted[..total_size].to_vec())
     }

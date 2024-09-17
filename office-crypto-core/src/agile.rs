@@ -39,11 +39,15 @@ impl AgileEncryptionInfo {
     pub fn new(mut encryption_info: impl Seek + Read) -> Result<Self, DecryptError> {
         encryption_info
             .seek(std::io::SeekFrom::Start(8))
-            .map_err(|_| InvalidStructure)?;
+            .map_err(|e| {
+                InvalidStructure(format!("AgileEncryption: encryption_info.seek(8): {e}"))
+            })?;
         let mut raw_xml = String::new();
-        encryption_info
-            .read_to_string(&mut raw_xml)
-            .map_err(|_| InvalidStructure)?;
+        encryption_info.read_to_string(&mut raw_xml).map_err(|e| {
+            InvalidStructure(format!(
+                "AgileEncryption: encryption_info.read_to_string(): {e}"
+            ))
+        })?;
 
         // let raw_xml = String::from_utf8(encryption_info.stream[8..].to_vec())
         //     .map_err(|_| InvalidStructure)?;
@@ -61,22 +65,40 @@ impl AgileEncryptionInfo {
                 Event::Empty(e) => match e.name().as_ref() {
                     b"keyData" if !set_key_data => {
                         for attr in e.attributes() {
-                            let attr = attr.map_err(|_| InvalidStructure)?;
+                            let attr = attr.map_err(|e| {
+                                InvalidStructure(format!(
+                                    "AgileEncryption: keyData: attributes(): {e}"
+                                ))
+                            })?;
                             match attr.key.as_ref() {
                                 b"saltValue" => {
                                     aei.key_data_salt = b64_decode(&attr.value)?;
                                 }
                                 b"hashAlgorithm" => {
-                                    aei.key_data_hash_algorithm =
-                                        String::from_utf8(attr.value.into_owned())
-                                            .map_err(|_| InvalidStructure)?;
+                                    aei.key_data_hash_algorithm = String::from_utf8(
+                                        attr.value.into_owned(),
+                                    )
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: keyData.hashAlgorithm: {e}"
+                                        ))
+                                    })?;
                                 }
                                 b"blockSize" => {
-                                    aei.key_data_block_size =
-                                        String::from_utf8(attr.value.into_owned())
-                                            .map_err(|_| InvalidStructure)?
-                                            .parse()
-                                            .map_err(|_| InvalidStructure)?;
+                                    aei.key_data_block_size = String::from_utf8(
+                                        attr.value.into_owned(),
+                                    )
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: keyData.blockSize: {e}"
+                                        ))
+                                    })?
+                                    .parse()
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: keyData.blockSize: parse(): {e}"
+                                        ))
+                                    })?;
                                 }
                                 _ => (),
                             }
@@ -85,7 +107,11 @@ impl AgileEncryptionInfo {
                     }
                     b"dataIntegrity" if !set_hmac_data => {
                         for attr in e.attributes() {
-                            let attr = attr.map_err(|_| InvalidStructure)?;
+                            let attr = attr.map_err(|e| {
+                                InvalidStructure(format!(
+                                    "AgileEncryption: dataIntegrity: attributes(): {e}"
+                                ))
+                            })?;
                             match attr.key.as_ref() {
                                 b"encryptedHmacKey" => {
                                     aei.encrypted_hmac_key = b64_decode(&attr.value)?;
@@ -100,7 +126,11 @@ impl AgileEncryptionInfo {
                     }
                     b"p:encryptedKey" if !set_password_node => {
                         for attr in e.attributes() {
-                            let attr = attr.map_err(|_| InvalidStructure)?;
+                            let attr = attr.map_err(|e| {
+                                InvalidStructure(format!(
+                                    "AgileEncryption: p:encryptedKey: attributes(): {e}"
+                                ))
+                            })?;
                             match attr.key.as_ref() {
                                 b"encryptedVerifierHashInput" => {
                                     aei.encrypted_verifier_hash_input = b64_decode(&attr.value)?;
@@ -113,24 +143,46 @@ impl AgileEncryptionInfo {
                                 }
                                 b"spinCount" => {
                                     aei.spin_count = String::from_utf8(attr.value.into_owned())
-                                        .map_err(|_| InvalidStructure)?
+                                        .map_err(|e| {
+                                            InvalidStructure(format!(
+                                                "AgileEncryption: p:encryptedKey.spinCount: {e}"
+                                            ))
+                                        })?
                                         .parse()
-                                        .map_err(|_| InvalidStructure)?;
+                                        .map_err(|e| {
+                                            InvalidStructure(format!(
+                                                "AgileEncryption: p:encryptedKey.spinCount: parse(): {e}"
+                                            ))
+                                        })?;
                                 }
                                 b"saltValue" => {
                                     aei.password_salt = b64_decode(&attr.value)?;
                                 }
                                 b"hashAlgorithm" => {
-                                    aei.password_hash_algorithm =
-                                        String::from_utf8(attr.value.into_owned())
-                                            .map_err(|_| InvalidStructure)?;
+                                    aei.password_hash_algorithm = String::from_utf8(
+                                        attr.value.into_owned(),
+                                    )
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: p:encryptedKey.hashAlgorithm: {e}"
+                                        ))
+                                    })?;
                                 }
                                 b"keyBits" => {
-                                    aei.password_key_bits =
-                                        String::from_utf8(attr.value.into_owned())
-                                            .map_err(|_| InvalidStructure)?
-                                            .parse()
-                                            .map_err(|_| InvalidStructure)?;
+                                    aei.password_key_bits = String::from_utf8(
+                                        attr.value.into_owned(),
+                                    )
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: p:encryptedKey.keyBits: {e}"
+                                        ))
+                                    })?
+                                    .parse()
+                                    .map_err(|e| {
+                                        InvalidStructure(format!(
+                                            "AgileEncryption: p:encryptedKey.keyBits: parse(): {e}"
+                                        ))
+                                    })?;
                                 }
                                 _ => (),
                             }
@@ -144,9 +196,18 @@ impl AgileEncryptionInfo {
             }
         }
 
-        validate!(set_key_data, InvalidStructure)?;
-        validate!(set_hmac_data, InvalidStructure)?;
-        validate!(set_password_node, InvalidStructure)?;
+        validate!(
+            set_key_data,
+            InvalidStructure("AgileEncryption: keyData is missing".to_string())
+        )?;
+        validate!(
+            set_hmac_data,
+            InvalidStructure("AgileEncryption: dataIntegrity is missing".to_string())
+        )?;
+        validate!(
+            set_password_node,
+            InvalidStructure("AgileEncryption: p:encryptedKey is missing".to_string())
+        )?;
 
         Ok(aei)
     }
@@ -163,9 +224,11 @@ impl AgileEncryptionInfo {
         mut encrypted_stream: impl Seek + Read,
     ) -> Result<Vec<u8>, DecryptError> {
         let mut bytes: [u8; 4] = [0; 4];
-        encrypted_stream
-            .read_exact(&mut bytes)
-            .map_err(|_| InvalidStructure)?;
+        encrypted_stream.read_exact(&mut bytes).map_err(|e| {
+            InvalidStructure(format!(
+                "AgileEncryption: decrypt: encrypted_steam.read_exact(4): {e}"
+            ))
+        })?;
 
         let total_size = u32::from_le_bytes(bytes) as usize;
 
@@ -186,12 +249,20 @@ impl AgileEncryptionInfo {
 
                     encrypted_stream
                         .seek(std::io::SeekFrom::Start(block_start as u64))
-                        .map_err(|_| InvalidStructure)?;
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA512: encrypted_stream(block_start): {e}"
+                            ))
+                        })?;
                     encrypted_stream
                         .by_ref()
                         .take(SEGMENT_LENGTH as u64)
                         .read_to_end(&mut in_buf)
-                        .map_err(|_| InvalidStructure)?;
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA512: encrypted_stream: read segment: {e}"
+                            ))
+                        })?;
 
                     // decrypt from encrypted_stream directly to output Vec
                     cbc_cipher
@@ -199,7 +270,11 @@ impl AgileEncryptionInfo {
                             &in_buf,
                             &mut decrypted[(block_start - 8)..(block_start - 8 + SEGMENT_LENGTH)],
                         )
-                        .map_err(|_| InvalidStructure)?;
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA512: cbc_cipher.decrypt: {e}"
+                            ))
+                        })?;
 
                     block_index += 1;
                     block_start += SEGMENT_LENGTH;
@@ -217,17 +292,32 @@ impl AgileEncryptionInfo {
 
                 encrypted_stream
                     .seek(std::io::SeekFrom::Start(block_start as u64))
-                    .map_err(|_| InvalidStructure)?;
-                encrypted_stream
-                    .read_to_end(&mut ciphertext)
-                    .map_err(|_| InvalidStructure)?;
+                    .map_err(|e| {
+                        InvalidStructure(format!(
+                            "AgileEncryption: decrypt: SHA512: encrypted_stream.seek(block_start): {e}"
+                        ))
+                    })?;
+                encrypted_stream.read_to_end(&mut ciphertext).map_err(|e| {
+                    InvalidStructure(format!(
+                        "AgileEncryption: decrypt: SHA512: encrypted_stream: read remaining: {e}"
+                    ))
+                })?;
 
-                validate!(ciphertext.len() % 16 == 0, InvalidStructure)?;
+                validate!(
+                    ciphertext.len() % 16 == 0,
+                    InvalidStructure(
+                        "AgileEncryption: decrypt: SHA512: remaining block size".to_string()
+                    )
+                )?;
 
                 let mut plaintext: Vec<u8> = vec![0; ciphertext.len()];
                 cbc_cipher
                     .decrypt_padded_b2b_mut::<NoPadding>(&ciphertext, &mut plaintext)
-                    .map_err(|_| InvalidStructure)?;
+                    .map_err(|e| {
+                        InvalidStructure(format!(
+                            "AgileEncryption: decrypt: SHA512: cbc_cipher.decrypt(remaining): {e}"
+                        ))
+                    })?;
                 let mut copy_span = plaintext.len() - 16 + irregular_block_len;
                 if irregular_block_len == 0 {
                     copy_span += 16;
@@ -240,7 +330,9 @@ impl AgileEncryptionInfo {
                 "AgileEncryption: key_data_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
-            _ => Err(InvalidStructure),
+            _ => Err(InvalidStructure(
+                "AgileEncryption: unrecognised key data hash algorithm".to_string(),
+            )),
         }
     }
 
@@ -264,7 +356,9 @@ impl AgileEncryptionInfo {
                 "AgileEncryption: password_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
-            _ => Err(InvalidStructure),
+            _ => Err(InvalidStructure(
+                "AgileEncryption: unrecognised password hash algorithm".to_string(),
+            )),
         }
     }
 
@@ -278,7 +372,9 @@ impl AgileEncryptionInfo {
                 "AgileEncryption: password_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
-            _ => Err(InvalidStructure),
+            _ => Err(InvalidStructure(
+                "AgileEncryption: unrecognised password hash algorithm".to_string(),
+            )),
         }
     }
 

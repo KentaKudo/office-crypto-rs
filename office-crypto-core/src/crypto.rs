@@ -21,16 +21,18 @@ pub fn decrypt<F: Read + Seek>(
 ) -> Result<Vec<u8>, DecryptError> {
     let mut encryption_info_stream = olefile
         .open_stream("EncryptionInfo")
-        .map_err(|_| InvalidStructure)?;
+        .map_err(|_| InvalidStructure("olefile.open_stream(\"EncryptionInfo\")".to_string()))?;
 
     let encrypted_package_stream = olefile
         .open_stream("EncryptedPackage")
-        .map_err(|_| InvalidStructure)?;
+        .map_err(|_| InvalidStructure("olefile.open_stream(\"EncryptedPackage\")".to_string()))?;
 
     let mut magic_bytes: [u8; 4] = [0; 4];
     encryption_info_stream
         .read_exact(&mut magic_bytes)
-        .map_err(|_| InvalidStructure)?;
+        .map_err(|_| {
+            InvalidStructure("encryption_info_stream.read_exact(magic_bytes)".to_string())
+        })?;
 
     match magic_bytes {
         [4, 0, 4, 0] => {
@@ -45,6 +47,6 @@ pub fn decrypt<F: Read + Seek>(
 
             sei.decrypt(&secret_key, encrypted_package_stream)
         }
-        _ => Err(InvalidStructure),
+        _ => Err(InvalidStructure("magic_bytes".to_string())),
     }
 }
