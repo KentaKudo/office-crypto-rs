@@ -425,53 +425,23 @@ impl AgileEncryptionInfo {
         let pass_utf16: Vec<u16> = password.encode_utf16().collect();
         let pass_utf16: &[u8] = unsafe { pass_utf16.align_to::<u8>().1 };
         let salted: Vec<u8> = [&self.password_salt, pass_utf16].concat();
-        // TODO rewrite and pass ShaXXX:digest() as param?
-        // could maybe abstract over T: Digest but the Sha512 type alias is weird
-        match self.password_hash_algorithm.as_str() {
-            "SHA512" => {
-                let mut h = Sha512::digest(salted);
-                for i in 0u32..self.spin_count {
-                    h = Sha512::digest([&i.to_le_bytes(), h.as_slice()].concat());
-                }
 
-                Ok(h.as_slice().to_owned())
-            }
-            "SHA1" => {
-                let mut h = Sha1::digest(salted);
-                for i in 0u32..self.spin_count {
-                    h = Sha1::digest([&i.to_le_bytes(), h.as_slice()].concat());
-                }
-
-                Ok(h.as_slice().to_owned())
-            }
-            "SHA256" | "SHA384" => Err(Unimplemented(format!(
-                "AgileEncryption: password_hash_algorithm: {}",
-                self.password_hash_algorithm
-            ))),
-            _ => Err(InvalidStructure(
-                "AgileEncryption: unrecognised password hash algorithm".to_string(),
-            )),
+        let mut h = hash(self.password_hash_algorithm.as_str(), &salted)?;
+        for i in 0u32..self.spin_count {
+            h = hash(
+                self.password_hash_algorithm.as_str(),
+                &[i.to_le_bytes().as_ref(), &h].concat(),
+            )?;
         }
+        Ok(h)
     }
 
     fn encryption_key(&self, digest: &[u8], block: &[u8]) -> Result<Vec<u8>, DecryptError> {
-        match self.password_hash_algorithm.as_str() {
-            "SHA512" => {
-                let h = Sha512::digest([digest, block].concat());
-                Ok(h.as_slice()[..(self.password_key_bits as usize / 8)].to_owned())
-            }
-            "SHA1" => {
-                let h = Sha1::digest([digest, block].concat());
-                Ok(h.as_slice()[..(self.password_key_bits as usize / 8)].to_owned())
-            }
-            "SHA256" | "SHA384" => Err(Unimplemented(format!(
-                "AgileEncryption: password_hash_algorithm: {}",
-                self.password_hash_algorithm
-            ))),
-            _ => Err(InvalidStructure(
-                "AgileEncryption: unrecognised password hash algorithm".to_string(),
-            )),
-        }
+        let h = hash(
+            self.password_hash_algorithm.as_str(),
+            &[digest, block].concat(),
+        )?;
+        Ok(h[..(self.password_key_bits as usize / 8)].to_owned())
     }
 
     fn decrypt_aes_cbc(&self, key: &[u8]) -> Result<Vec<u8>, DecryptError> {
@@ -504,5 +474,13 @@ impl AgileEncryptionInfo {
         }
 
         Ok(plaintext)
+    }
+}
+
+fn hash(algorithm: &str, input: &[u8]) -> Result<Vec<u8>, DecryptError> {
+    match algorithm {
+        "SHA512" => Ok(Sha512::digest(input).as_slice().to_owned()),
+        "SHA1" => Ok(Sha1::digest(input).as_slice().to_owned()),
+        _ => Err(InvalidStructure("unrecognised hash algorithm".to_string())),
     }
 }
