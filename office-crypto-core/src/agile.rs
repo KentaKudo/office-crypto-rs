@@ -1,12 +1,10 @@
 use crate::errors::DecryptError::{self, *};
 use crate::utils::{b64_decode, validate};
 
-use aes::cipher::{
-    block_padding::NoPadding, generic_array::typenum::consts::U16, generic_array::GenericArray,
-    BlockDecryptMut, KeyIvInit,
-};
+use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use sha1::Sha1;
 use sha2::{Digest, Sha512};
 use std::io::prelude::*;
 
@@ -85,20 +83,19 @@ impl AgileEncryptionInfo {
                                     })?;
                                 }
                                 b"blockSize" => {
-                                    aei.key_data_block_size = String::from_utf8(
-                                        attr.value.into_owned(),
-                                    )
-                                    .map_err(|e| {
-                                        InvalidStructure(format!(
-                                            "AgileEncryption: keyData.blockSize: {e}"
-                                        ))
-                                    })?
-                                    .parse()
-                                    .map_err(|e| {
-                                        InvalidStructure(format!(
+                                    aei.key_data_block_size =
+                                        String::from_utf8(attr.value.into_owned())
+                                            .map_err(|e| {
+                                                InvalidStructure(format!(
+                                                    "AgileEncryption: keyData.blockSize: {e}"
+                                                ))
+                                            })?
+                                            .parse()
+                                            .map_err(|e| {
+                                                InvalidStructure(format!(
                                             "AgileEncryption: keyData.blockSize: parse(): {e}"
                                         ))
-                                    })?;
+                                            })?;
                                 }
                                 _ => (),
                             }
@@ -169,20 +166,19 @@ impl AgileEncryptionInfo {
                                     })?;
                                 }
                                 b"keyBits" => {
-                                    aei.password_key_bits = String::from_utf8(
-                                        attr.value.into_owned(),
-                                    )
-                                    .map_err(|e| {
-                                        InvalidStructure(format!(
-                                            "AgileEncryption: p:encryptedKey.keyBits: {e}"
-                                        ))
-                                    })?
-                                    .parse()
-                                    .map_err(|e| {
-                                        InvalidStructure(format!(
+                                    aei.password_key_bits =
+                                        String::from_utf8(attr.value.into_owned())
+                                            .map_err(|e| {
+                                                InvalidStructure(format!(
+                                                    "AgileEncryption: p:encryptedKey.keyBits: {e}"
+                                                ))
+                                            })?
+                                            .parse()
+                                            .map_err(|e| {
+                                                InvalidStructure(format!(
                                             "AgileEncryption: p:encryptedKey.keyBits: parse(): {e}"
                                         ))
-                                    })?;
+                                            })?;
                                 }
                                 _ => (),
                             }
@@ -326,7 +322,95 @@ impl AgileEncryptionInfo {
                     .copy_from_slice(&plaintext[..copy_span]);
                 Ok(decrypted)
             }
-            "SHA1" | "SHA256" | "SHA384" => Err(Unimplemented(format!(
+            "SHA1" => {
+                while block_start < (total_size - SEGMENT_LENGTH) {
+                    let iv = Sha1::digest([key_data_salt, &block_index.to_le_bytes()].concat());
+                    let iv = &iv[..16];
+
+                    let cbc_cipher = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into());
+
+                    let mut in_buf: Vec<u8> = vec![];
+
+                    encrypted_stream
+                        .seek(std::io::SeekFrom::Start(block_start as u64))
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA1: encrypted_stream(block_start): {e}"
+                            ))
+                        })?;
+                    encrypted_stream
+                        .by_ref()
+                        .take(SEGMENT_LENGTH as u64)
+                        .read_to_end(&mut in_buf)
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA1: encrypted_stream: read segment: {e}"
+                            ))
+                        })?;
+
+                    // decrypt from encrypted_stream directly to output Vec
+                    cbc_cipher
+                        .decrypt_padded_b2b_mut::<NoPadding>(
+                            &in_buf,
+                            &mut decrypted[(block_start - 8)..(block_start - 8 + SEGMENT_LENGTH)],
+                        )
+                        .map_err(|e| {
+                            InvalidStructure(format!(
+                                "AgileEncryption: decrypt: SHA1: cbc_cipher.decrypt: {e}"
+                            ))
+                        })?;
+
+                    block_index += 1;
+                    block_start += SEGMENT_LENGTH;
+                }
+                // parse last block w less than 4096 bytes
+                let remaining = total_size - (block_start - 8);
+                let iv = Sha1::digest([key_data_salt, &block_index.to_le_bytes()].concat());
+                let iv = &iv[..16];
+
+                let cbc_cipher = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into());
+                let irregular_block_len = remaining % 16;
+
+                // remaining bytes in encrypted_stream should be a multiple of block size even if we only use some of the decrypted bytes
+                let mut ciphertext: Vec<u8> = vec![];
+
+                encrypted_stream
+                    .seek(std::io::SeekFrom::Start(block_start as u64))
+                    .map_err(|e| {
+                        InvalidStructure(format!(
+                            "AgileEncryption: decrypt: SHA1: encrypted_stream.seek(block_start): {e}"
+                        ))
+                    })?;
+                encrypted_stream.read_to_end(&mut ciphertext).map_err(|e| {
+                    InvalidStructure(format!(
+                        "AgileEncryption: decrypt: SHA1: encrypted_stream: read remaining: {e}"
+                    ))
+                })?;
+
+                validate!(
+                    ciphertext.len() % 16 == 0,
+                    InvalidStructure(
+                        "AgileEncryption: decrypt: SHA1: remaining block size".to_string()
+                    )
+                )?;
+
+                let mut plaintext: Vec<u8> = vec![0; ciphertext.len()];
+                cbc_cipher
+                    .decrypt_padded_b2b_mut::<NoPadding>(&ciphertext, &mut plaintext)
+                    .map_err(|e| {
+                        InvalidStructure(format!(
+                            "AgileEncryption: decrypt: SHA1: cbc_cipher.decrypt(remaining): {e}"
+                        ))
+                    })?;
+                let mut copy_span = plaintext.len() - 16 + irregular_block_len;
+                if irregular_block_len == 0 {
+                    copy_span += 16;
+                }
+                decrypted[(block_start - 8)..(block_start + copy_span - 8)]
+                    .copy_from_slice(&plaintext[..copy_span]);
+                Ok(decrypted)
+            }
+            "SHA256" | "SHA384" => Err(Unimplemented(format!(
                 "AgileEncryption: key_data_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
@@ -352,7 +436,15 @@ impl AgileEncryptionInfo {
 
                 Ok(h.as_slice().to_owned())
             }
-            "SHA1" | "SHA256" | "SHA384" => Err(Unimplemented(format!(
+            "SHA1" => {
+                let mut h = Sha1::digest(salted);
+                for i in 0u32..self.spin_count {
+                    h = Sha1::digest([&i.to_le_bytes(), h.as_slice()].concat());
+                }
+
+                Ok(h.as_slice().to_owned())
+            }
+            "SHA256" | "SHA384" => Err(Unimplemented(format!(
                 "AgileEncryption: password_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
@@ -368,7 +460,11 @@ impl AgileEncryptionInfo {
                 let h = Sha512::digest([digest, block].concat());
                 Ok(h.as_slice()[..(self.password_key_bits as usize / 8)].to_owned())
             }
-            "SHA1" | "SHA256" | "SHA384" => Err(Unimplemented(format!(
+            "SHA1" => {
+                let h = Sha1::digest([digest, block].concat());
+                Ok(h.as_slice()[..(self.password_key_bits as usize / 8)].to_owned())
+            }
+            "SHA256" | "SHA384" => Err(Unimplemented(format!(
                 "AgileEncryption: password_hash_algorithm: {}",
                 self.password_hash_algorithm
             ))),
@@ -379,30 +475,33 @@ impl AgileEncryptionInfo {
     }
 
     fn decrypt_aes_cbc(&self, key: &[u8]) -> Result<Vec<u8>, DecryptError> {
-        let mut cbc_cipher =
-            cbc::Decryptor::<aes::Aes256>::new(key.into(), self.password_salt.as_slice().into());
+        let mut plaintext = vec![0u8; self.encrypted_key_value.len()];
 
-        // two 16-byte cbc blocks
-        // TODO how does the hash func affect # of blocks?
-        let i1: GenericArray<u8, U16> =
-            GenericArray::clone_from_slice(&self.encrypted_key_value.clone()[..16]);
-        let i2: GenericArray<u8, U16> =
-            GenericArray::clone_from_slice(&self.encrypted_key_value.clone()[16..]);
-        let ciphertext_blocks = [i1, i2];
-
-        let o1: GenericArray<u8, U16> = GenericArray::default();
-        let o2: GenericArray<u8, U16> = GenericArray::default();
-        let mut plaintext_blocks = [o1, o2];
-
-        cbc_cipher
-            .decrypt_blocks_b2b_mut(&ciphertext_blocks, &mut plaintext_blocks)
-            .map_err(|_| Unknown)?;
-
-        let plaintext = [
-            plaintext_blocks[0].as_slice(),
-            plaintext_blocks[1].as_slice(),
-        ]
-        .concat();
+        match self.password_key_bits {
+            128 => {
+                let cipher = cbc::Decryptor::<aes::Aes128>::new(
+                    key.into(),
+                    self.password_salt.as_slice().into(),
+                );
+                cipher
+                    .decrypt_padded_b2b_mut::<NoPadding>(&self.encrypted_key_value, &mut plaintext)
+                    .map_err(|_| Unknown)?;
+            }
+            256 => {
+                let cipher = cbc::Decryptor::<aes::Aes256>::new(
+                    key.into(),
+                    self.password_salt.as_slice().into(),
+                );
+                cipher
+                    .decrypt_padded_b2b_mut::<NoPadding>(&self.encrypted_key_value, &mut plaintext)
+                    .map_err(|_| Unknown)?;
+            }
+            _ => {
+                return Err(InvalidStructure(
+                    "AgileEncryption: unrecognised password key bits".to_string(),
+                ))
+            }
+        }
 
         Ok(plaintext)
     }
