@@ -211,7 +211,7 @@ impl AgileEncryptionInfo {
     pub fn key_from_password(&self, password: &str) -> Result<Vec<u8>, DecryptError> {
         let digest = self.iterated_hash_from_password(password)?;
         let encryption_key = self.encryption_key(&digest, &BLOCK3)?;
-        self.decrypt_aes_cbc(&encryption_key)
+        self.decrypt_encrypted_key(&encryption_key)
     }
 
     pub fn decrypt(
@@ -233,191 +233,80 @@ impl AgileEncryptionInfo {
         let mut decrypted: Vec<u8> = vec![0; total_size];
         let key_data_salt: &[u8] = &self.key_data_salt;
 
-        match self.key_data_hash_algorithm.as_str() {
-            "SHA512" => {
-                while block_start < (total_size - SEGMENT_LENGTH) {
-                    let iv = Sha512::digest([key_data_salt, &block_index.to_le_bytes()].concat());
-                    let iv = &iv[..16];
+        while block_start < (total_size - SEGMENT_LENGTH) {
+            let iv = hash(
+                &self.key_data_hash_algorithm,
+                &[key_data_salt, &block_index.to_le_bytes()].concat(),
+            )?;
+            let iv = &iv[..16];
 
-                    let cbc_cipher = cbc::Decryptor::<aes::Aes256>::new(key.into(), iv.into());
-
-                    let mut in_buf: Vec<u8> = vec![];
-
-                    encrypted_stream
-                        .seek(std::io::SeekFrom::Start(block_start as u64))
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA512: encrypted_stream(block_start): {e}"
-                            ))
-                        })?;
-                    encrypted_stream
-                        .by_ref()
-                        .take(SEGMENT_LENGTH as u64)
-                        .read_to_end(&mut in_buf)
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA512: encrypted_stream: read segment: {e}"
-                            ))
-                        })?;
-
-                    // decrypt from encrypted_stream directly to output Vec
-                    cbc_cipher
-                        .decrypt_padded_b2b_mut::<NoPadding>(
-                            &in_buf,
-                            &mut decrypted[(block_start - 8)..(block_start - 8 + SEGMENT_LENGTH)],
-                        )
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA512: cbc_cipher.decrypt: {e}"
-                            ))
-                        })?;
-
-                    block_index += 1;
-                    block_start += SEGMENT_LENGTH;
-                }
-                // parse last block w less than 4096 bytes
-                let remaining = total_size - (block_start - 8);
-                let iv = Sha512::digest([key_data_salt, &block_index.to_le_bytes()].concat());
-                let iv = &iv[..16];
-
-                let cbc_cipher = cbc::Decryptor::<aes::Aes256>::new(key.into(), iv.into());
-                let irregular_block_len = remaining % 16;
-
-                // remaining bytes in encrypted_stream should be a multiple of block size even if we only use some of the decrypted bytes
-                let mut ciphertext: Vec<u8> = vec![];
-
-                encrypted_stream
-                    .seek(std::io::SeekFrom::Start(block_start as u64))
-                    .map_err(|e| {
-                        InvalidStructure(format!(
-                            "AgileEncryption: decrypt: SHA512: encrypted_stream.seek(block_start): {e}"
-                        ))
-                    })?;
-                encrypted_stream.read_to_end(&mut ciphertext).map_err(|e| {
+            encrypted_stream
+                .seek(std::io::SeekFrom::Start(block_start as u64))
+                .map_err(|e| {
                     InvalidStructure(format!(
-                        "AgileEncryption: decrypt: SHA512: encrypted_stream: read remaining: {e}"
+                        "AgileEncryption: decrypt: encrypted_stream(block_start): {e}"
                     ))
                 })?;
 
-                validate!(
-                    ciphertext.len() % 16 == 0,
-                    InvalidStructure(
-                        "AgileEncryption: decrypt: SHA512: remaining block size".to_string()
-                    )
-                )?;
-
-                let mut plaintext: Vec<u8> = vec![0; ciphertext.len()];
-                cbc_cipher
-                    .decrypt_padded_b2b_mut::<NoPadding>(&ciphertext, &mut plaintext)
-                    .map_err(|e| {
-                        InvalidStructure(format!(
-                            "AgileEncryption: decrypt: SHA512: cbc_cipher.decrypt(remaining): {e}"
-                        ))
-                    })?;
-                let mut copy_span = plaintext.len() - 16 + irregular_block_len;
-                if irregular_block_len == 0 {
-                    copy_span += 16;
-                }
-                decrypted[(block_start - 8)..(block_start + copy_span - 8)]
-                    .copy_from_slice(&plaintext[..copy_span]);
-                Ok(decrypted)
-            }
-            "SHA1" => {
-                while block_start < (total_size - SEGMENT_LENGTH) {
-                    let iv = Sha1::digest([key_data_salt, &block_index.to_le_bytes()].concat());
-                    let iv = &iv[..16];
-
-                    let cbc_cipher = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into());
-
-                    let mut in_buf: Vec<u8> = vec![];
-
-                    encrypted_stream
-                        .seek(std::io::SeekFrom::Start(block_start as u64))
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA1: encrypted_stream(block_start): {e}"
-                            ))
-                        })?;
-                    encrypted_stream
-                        .by_ref()
-                        .take(SEGMENT_LENGTH as u64)
-                        .read_to_end(&mut in_buf)
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA1: encrypted_stream: read segment: {e}"
-                            ))
-                        })?;
-
-                    // decrypt from encrypted_stream directly to output Vec
-                    cbc_cipher
-                        .decrypt_padded_b2b_mut::<NoPadding>(
-                            &in_buf,
-                            &mut decrypted[(block_start - 8)..(block_start - 8 + SEGMENT_LENGTH)],
-                        )
-                        .map_err(|e| {
-                            InvalidStructure(format!(
-                                "AgileEncryption: decrypt: SHA1: cbc_cipher.decrypt: {e}"
-                            ))
-                        })?;
-
-                    block_index += 1;
-                    block_start += SEGMENT_LENGTH;
-                }
-                // parse last block w less than 4096 bytes
-                let remaining = total_size - (block_start - 8);
-                let iv = Sha1::digest([key_data_salt, &block_index.to_le_bytes()].concat());
-                let iv = &iv[..16];
-
-                let cbc_cipher = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into());
-                let irregular_block_len = remaining % 16;
-
-                // remaining bytes in encrypted_stream should be a multiple of block size even if we only use some of the decrypted bytes
-                let mut ciphertext: Vec<u8> = vec![];
-
-                encrypted_stream
-                    .seek(std::io::SeekFrom::Start(block_start as u64))
-                    .map_err(|e| {
-                        InvalidStructure(format!(
-                            "AgileEncryption: decrypt: SHA1: encrypted_stream.seek(block_start): {e}"
-                        ))
-                    })?;
-                encrypted_stream.read_to_end(&mut ciphertext).map_err(|e| {
+            let mut in_buf: Vec<u8> = vec![];
+            encrypted_stream
+                .by_ref()
+                .take(SEGMENT_LENGTH as u64)
+                .read_to_end(&mut in_buf)
+                .map_err(|e| {
                     InvalidStructure(format!(
-                        "AgileEncryption: decrypt: SHA1: encrypted_stream: read remaining: {e}"
+                        "AgileEncryption: decrypt: encrypted_stream: read segment: {e}"
                     ))
                 })?;
 
-                validate!(
-                    ciphertext.len() % 16 == 0,
-                    InvalidStructure(
-                        "AgileEncryption: decrypt: SHA1: remaining block size".to_string()
-                    )
-                )?;
+            // decrypt from encrypted_stream directly to output Vec
+            let plaintext = decrypt_aes_cbc(key, iv, &in_buf)?;
+            decrypted[(block_start - 8)..(block_start - 8 + SEGMENT_LENGTH)]
+                .copy_from_slice(&plaintext[..SEGMENT_LENGTH]);
 
-                let mut plaintext: Vec<u8> = vec![0; ciphertext.len()];
-                cbc_cipher
-                    .decrypt_padded_b2b_mut::<NoPadding>(&ciphertext, &mut plaintext)
-                    .map_err(|e| {
-                        InvalidStructure(format!(
-                            "AgileEncryption: decrypt: SHA1: cbc_cipher.decrypt(remaining): {e}"
-                        ))
-                    })?;
-                let mut copy_span = plaintext.len() - 16 + irregular_block_len;
-                if irregular_block_len == 0 {
-                    copy_span += 16;
-                }
-                decrypted[(block_start - 8)..(block_start + copy_span - 8)]
-                    .copy_from_slice(&plaintext[..copy_span]);
-                Ok(decrypted)
-            }
-            "SHA256" | "SHA384" => Err(Unimplemented(format!(
-                "AgileEncryption: key_data_hash_algorithm: {}",
-                self.password_hash_algorithm
-            ))),
-            _ => Err(InvalidStructure(
-                "AgileEncryption: unrecognised key data hash algorithm".to_string(),
-            )),
+            block_index += 1;
+            block_start += SEGMENT_LENGTH;
         }
+
+        // parse last block w less than 4096 bytes
+
+        encrypted_stream
+            .seek(std::io::SeekFrom::Start(block_start as u64))
+            .map_err(|e| {
+                InvalidStructure(format!(
+                    "AgileEncryption: decrypt: encrypted_stream.seek(block_start): {e}"
+                ))
+            })?;
+        let mut ciphertext: Vec<u8> = vec![];
+        encrypted_stream.read_to_end(&mut ciphertext).map_err(|e| {
+            InvalidStructure(format!(
+                "AgileEncryption: decrypt: encrypted_stream: read remaining: {e}"
+            ))
+        })?;
+
+        // remaining bytes in encrypted_stream should be a multiple of block size even if we only use some of the decrypted bytes
+        validate!(
+            ciphertext.len() % 16 == 0,
+            InvalidStructure("AgileEncryption: decrypt: remaining block size".to_string())
+        )?;
+
+        let iv = hash(
+            &self.key_data_hash_algorithm,
+            &[key_data_salt, &block_index.to_le_bytes()].concat(),
+        )?;
+        let iv = &iv[..16];
+        let plaintext = decrypt_aes_cbc(key, iv, &ciphertext)?;
+
+        let remaining = total_size - (block_start - 8);
+        let irregular_block_len = remaining % 16;
+        let mut copy_span = plaintext.len() - 16 + irregular_block_len;
+        if irregular_block_len == 0 {
+            copy_span += 16;
+        }
+        decrypted[(block_start - 8)..(block_start + copy_span - 8)]
+            .copy_from_slice(&plaintext[..copy_span]);
+
+        Ok(decrypted)
     }
 
     // this function is ridiculously expensive as it usually runs 10000 SHA512's
@@ -444,37 +333,32 @@ impl AgileEncryptionInfo {
         Ok(h[..(self.password_key_bits as usize / 8)].to_owned())
     }
 
-    fn decrypt_aes_cbc(&self, key: &[u8]) -> Result<Vec<u8>, DecryptError> {
-        let mut plaintext = vec![0u8; self.encrypted_key_value.len()];
-
-        match self.password_key_bits {
-            128 => {
-                let cipher = cbc::Decryptor::<aes::Aes128>::new(
-                    key.into(),
-                    self.password_salt.as_slice().into(),
-                );
-                cipher
-                    .decrypt_padded_b2b_mut::<NoPadding>(&self.encrypted_key_value, &mut plaintext)
-                    .map_err(|_| Unknown)?;
-            }
-            256 => {
-                let cipher = cbc::Decryptor::<aes::Aes256>::new(
-                    key.into(),
-                    self.password_salt.as_slice().into(),
-                );
-                cipher
-                    .decrypt_padded_b2b_mut::<NoPadding>(&self.encrypted_key_value, &mut plaintext)
-                    .map_err(|_| Unknown)?;
-            }
-            _ => {
-                return Err(InvalidStructure(
-                    "AgileEncryption: unrecognised password key bits".to_string(),
-                ))
-            }
-        }
-
-        Ok(plaintext)
+    fn decrypt_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>, DecryptError> {
+        decrypt_aes_cbc(key, &self.password_salt, &self.encrypted_key_value)
     }
+}
+
+fn decrypt_aes_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, DecryptError> {
+    let mut plaintext = vec![0u8; ciphertext.len()];
+
+    let key_len = key.len() * 8;
+    match key_len {
+        128 => {
+            let cipher = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into());
+            cipher
+                .decrypt_padded_b2b_mut::<NoPadding>(ciphertext, &mut plaintext)
+                .map_err(|_| Unknown)?;
+        }
+        256 => {
+            let cipher = cbc::Decryptor::<aes::Aes256>::new(key.into(), iv.into());
+            cipher
+                .decrypt_padded_b2b_mut::<NoPadding>(ciphertext, &mut plaintext)
+                .map_err(|_| Unknown)?;
+        }
+        _ => return Err(InvalidStructure("unrecognised key length".to_string())),
+    }
+
+    Ok(plaintext)
 }
 
 fn hash(algorithm: &str, input: &[u8]) -> Result<Vec<u8>, DecryptError> {
