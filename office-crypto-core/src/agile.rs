@@ -211,7 +211,11 @@ impl AgileEncryptionInfo {
     pub fn key_from_password(&self, password: &str) -> Result<Vec<u8>, DecryptError> {
         let digest = self.iterated_hash_from_password(password)?;
         let encryption_key = self.encryption_key(&digest, &BLOCK3)?;
-        self.decrypt_encrypted_key(&encryption_key)
+        decrypt_aes_cbc(
+            &encryption_key,
+            &self.password_salt,
+            &self.encrypted_key_value,
+        )
     }
 
     pub fn decrypt(
@@ -331,10 +335,6 @@ impl AgileEncryptionInfo {
             &[digest, block].concat(),
         )?;
         Ok(h[..(self.password_key_bits as usize / 8)].to_owned())
-    }
-
-    fn decrypt_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>, DecryptError> {
-        decrypt_aes_cbc(key, &self.password_salt, &self.encrypted_key_value)
     }
 }
 
