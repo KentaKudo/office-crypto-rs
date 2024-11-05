@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "",
   "license": "MIT",
-  "main": "dist/node/index.js",
+  "main": "dist/web/index.js",
   "browser": "dist/web/index.js",
   "scripts": {
     "wasm-pack:dev": "wasm-pack build --out-dir pkg",
